@@ -1,0 +1,105 @@
+# Check and unzip the raw data
+md5sum -c clean_md5.txt 
+gunzip *.gz
+
+#activaye the env
+conda activate why
+
+# 01 Flash to merge the .R1 and .R2 reads
+flash V2_D1.R1.clean.fastq V2_D1.R2.clean.fastq -o V2_D1
+flash V2_D2.R1.clean.fastq V2_D2.R2.clean.fastq -o V2_D2
+flash V2_D3.R1.clean.fastq V2_D3.R2.clean.fastq -o V2_D3
+flash V2_R1.R1.clean.fastq V2_R1.R2.clean.fastq -o V2_R1
+flash V2_R2.R1.clean.fastq V2_R2.R2.clean.fastq -o V2_R2
+flash V2_R3.R1.clean.fastq V2_R3.R2.clean.fastq -o V2_R3
+
+# 02 Barcode sequence extraction and stat (02barcode_extract_stat.py)
+import os
+import re
+from collections import Counter
+
+# **定义输入文件夹和输出文件夹**
+input_folder = "./"
+output_folder = "/lustre/home/acct-clsbfw/zx2018/Xuerlock/V2-PE150-new"
+
+# barcode两侧锚定序列（含18 bp barcode）
+seq1_tail = "gggatcactctcggcatggacgagctgtacaag"
+seq2_head = "taaAAAGGAGGCCCTTCAGTTTCAC"
+
+# 正则表达式提取barcode（小写，容错）
+pattern = re.compile(re.escape(seq1_tail.lower()) + r'([acgt]{18})' + re.escape(seq2_head.lower()))
+
+# **要处理的所有文件列表**
+file_list = [
+    "V2_D1.extendedFrags.fastq",
+    "V2_D2.extendedFrags.fastq",
+    "V2_D3.extendedFrags.fastq",
+    "V2_R1.extendedFrags.fastq",
+    "V2_R2.extendedFrags.fastq",
+    "V2_R3.extendedFrags.fastq"
+]
+
+# **遍历每个文件执行分析**
+for filename in file_list:
+    merged_fastq = os.path.join(input_folder, filename)
+
+    barcode_counter = Counter()
+    barcode_list = []
+    total_reads = 0
+    matched_reads = 0
+    quality_pass_reads = 0
+
+    if os.path.exists(merged_fastq):
+        with open(merged_fastq, 'r') as f:
+            while True:
+                header = f.readline()
+                seq = f.readline()
+                plus = f.readline()
+                qual = f.readline()
+                if not qual:
+                    break
+                total_reads += 1
+                seq = seq.strip().lower()
+                qual = qual.strip()
+                match = pattern.search(seq)
+                if match:
+                    matched_reads += 1
+                    barcode = match.group(1)
+                    start = match.start(1)
+                    qual_scores = [ord(c) - 33 for c in qual[start:start+18]]
+                    if len(qual_scores) == 18 and min(qual_scores) >= 30:
+                        quality_pass_reads += 1
+                        barcode_counter[barcode] += 1
+                        barcode_list.append(barcode)
+  # **生成输出文件名前缀**
+        prefix = filename.replace(".extendedFrags.fastq", "")
+
+        stats = {
+            "Total Merged Reads": total_reads,
+            "Reads With Barcode Match": matched_reads,
+            "Reads With Valid Barcode (Q>=30)": quality_pass_reads,
+            "Fraction With Barcode": round(matched_reads / total_reads, 4) if total_reads else 0,
+            "Fraction Q>=30": round(quality_pass_reads / total_reads, 4) if total_reads else 0,
+            "Unique Barcodes (Q>=30)": len(barcode_counter)
+        }
+
+        # **保存频次表和序列表**
+        with open(os.path.join(output_folder, f"{prefix}_barcode_counts.tsv"), "w") as out1:
+            out1.write("Barcode\tCount\n")
+            for bc, count in barcode_counter.most_common():
+                out1.write(f"{bc}\t{count}\n")
+
+        with open(os.path.join(output_folder, f"{prefix}_all_barcodes.txt"), "w") as out2:
+            for bc in barcode_list:
+                out2.write(f"{bc}\n")
+
+        # **打印当前文件统计结果**
+        print(f"\nStats for {filename}:")
+        for k, v in stats.items():
+            print(f"{k}: {v}")
+    else:
+        print(f"File not found: {merged_fastq}")
+
+
+
+# 03 Ei/Di
