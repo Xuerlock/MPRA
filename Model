@@ -1,0 +1,6 @@
+# Mean and SD of the rep1, rep2, and rep3. 
+
+# Filter the dataset by CV<0.3 (SD/Mean < 0.3)
+
+
+# Train the 1D_CNN model
